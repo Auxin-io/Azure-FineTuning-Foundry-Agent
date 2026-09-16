@@ -1,0 +1,22 @@
+$schema: https://azuremlschemas.azureedge.net/latest/managedOnlineDeployment.schema.json
+name: blue
+endpoint_name: docintel-qwen
+model: azureml:docintel-qwen-adapter@latest
+code_configuration:
+  code: .
+  scoring_script: score.py
+environment:
+  # T4 GPU: sub-second answers. score.py picks fp16 on a T4 at run time.
+  # For a CPU fallback use openmpi4.1.0-ubuntu22.04 + Standard_E4ds_v4 (~10-20 s/answer).
+  image: mcr.microsoft.com/azureml/openmpi5.0-cuda12.4-ubuntu22.04
+  conda_file: environment.yml
+instance_type: Standard_NC4as_T4_v3
+instance_count: 1
+request_settings:
+  request_timeout_ms: 90000
+liveness_probe:
+  initial_delay: 600
+readiness_probe:
+  initial_delay: 600
+environment_variables:
+  BASE_MODEL_ID: Qwen/Qwen2.5-3B-Instruct

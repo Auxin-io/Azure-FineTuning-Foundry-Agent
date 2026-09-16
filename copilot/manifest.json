@@ -1,0 +1,39 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.19/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.19",
+  "version": "1.0.0",
+  "id": "REPLACE_WITH_A_NEW_GUID",
+  "developer": {
+    "name": "Auxin",
+    "websiteUrl": "https://auxin.io",
+    "privacyUrl": "https://auxin.io/privacy",
+    "termsOfUseUrl": "https://auxin.io/terms"
+  },
+  "name": {
+    "short": "Finance Documents",
+    "full": "Finance Documents - fine-tuned Qwen on Azure ML"
+  },
+  "description": {
+    "short": "Ask about the ten finance documents",
+    "full": "Answers invoice and purchase-order questions from a Qwen2.5-3B model fine-tuned on the finance documents and served from Azure ML. No document is retrieved at question time; the facts are in the model weights."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#0A9B7C",
+  "copilotAgents": {
+    "declarativeAgents": [
+      {
+        "id": "financedocs",
+        "file": "declarativeAgent.json"
+      }
+    ]
+  },
+  "permissions": [
+    "identity"
+  ],
+  "validDomains": [
+    "docintel-qwen.eastus.inference.ml.azure.com"
+  ]
+}

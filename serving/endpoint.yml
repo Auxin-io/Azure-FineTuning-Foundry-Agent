@@ -1,0 +1,7 @@
+$schema: https://azuremlschemas.azureedge.net/latest/managedOnlineEndpoint.schema.json
+name: docintel-qwen
+description: AAD-protected Qwen finance inference endpoint.
+auth_mode: aad_token
+public_network_access: enabled
+traffic:
+  blue: 100

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/copilot/plugin/v2.2/schema.json",
+  "schema_version": "v2.2",
+  "name_for_human": "Finance Documents",
+  "description_for_human": "Invoice and purchase-order facts for the company's ten finance documents.",
+  "description_for_model": "Call this for ANY question about an invoice, purchase order, vendor, supplier, invoice total, due date, PO number or required-by date. Pass the user's question through unchanged. Reply with the tool's answer verbatim - never invent numbers.",
+  "namespace": "financedocs",
+  "functions": [
+    {
+      "name": "answerFinanceQuestion",
+      "description": "Answer a finance-document question from the fine-tuned model. Input: the user's question. Output: a sentence or JSON with the invoice/PO facts.",
+      "capabilities": {
+        "response_semantics": {
+          "data_path": "$",
+          "properties": {
+            "title": "$.variant",
+            "subtitle": "$.answer"
+          }
+        }
+      }
+    }
+  ],
+  "runtimes": [
+    {
+      "type": "OpenApi",
+      "auth": {
+        "type": "OAuthPluginVault",
+        "reference_id": "REPLACE_WITH_OAUTH_REGISTRATION_ID"
+      },
+      "spec": {
+        "url": "finance-qwen.openapi.yaml"
+      },
+      "run_for_functions": [
+        "answerFinanceQuestion"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+$schema: https://azuremlschemas.azureedge.net/latest/data.schema.json
+type: uri_file
+name: docintel-finance-validation
+version: 3
+description: finance closed-book validation rows, built by the ingestion repo
+path: azureml://datastores/ingest_curated/paths/datasets/closed_book_finance/validation.jsonl

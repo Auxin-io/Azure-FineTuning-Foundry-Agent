@@ -1,0 +1,8 @@
+# Credential-less datastore on the ingestion repo's curated container.
+# Jobs read it with the compute cluster's managed identity (Storage Blob Data Reader).
+$schema: https://azuremlschemas.azureedge.net/latest/azureBlob.schema.json
+name: ingest_curated
+type: azure_blob
+description: curated container of the document-ingestion storage account
+account_name: docintelingestchlo62
+container_name: curated

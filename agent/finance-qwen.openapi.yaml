@@ -1,0 +1,58 @@
+openapi: 3.0.3
+info:
+  title: Finance Qwen Endpoint
+  version: 1.0.0
+security:
+  - bearerAuth: []
+servers:
+  - url: https://REPLACE_WITH_AZURE_ML_SCORING_URI
+paths:
+  /score:
+    post:
+      operationId: answerFinanceQuestion
+      summary: Answer a finance question with the fine-tuned Qwen model
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FinanceRequest'
+      responses:
+        "200":
+          description: Qwen answer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FinanceResponse'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    FinanceRequest:
+      type: object
+      required: [question]
+      properties:
+        question:
+          type: string
+        context:
+          type: string
+        use_adapter:
+          type: boolean
+          default: true
+        max_new_tokens:
+          type: integer
+          minimum: 1
+          maximum: 512
+    FinanceResponse:
+      type: object
+      required: [answer, variant]
+      properties:
+        answer:
+          type: string
+        variant:
+          type: string
+        latency_ms:
+          type: number
