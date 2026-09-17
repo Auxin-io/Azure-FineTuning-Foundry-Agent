@@ -37,12 +37,13 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--endpoint", default="docintel-qwen")
     ap.add_argument("--rg", default="docintel-ml-rg")
-    ap.add_argument("--workspace", default="docintel-mlw-dggcb4")
+    ap.add_argument("--workspace", help="defaults to the only workspace in the resource group")
     ap.add_argument("--ask")
     args = ap.parse_args()
 
+    ws = args.workspace or az("ml", "workspace", "list", "-g", args.rg, "--query", "[0].name", "-o", "tsv")
     uri = az("ml", "online-endpoint", "show", "-n", args.endpoint, "-g", args.rg,
-             "-w", args.workspace, "--query", "scoring_uri", "-o", "tsv")
+             "-w", ws, "--query", "scoring_uri", "-o", "tsv")
     token = az("account", "get-access-token", "--resource", "https://ml.azure.com",
                "--query", "accessToken", "-o", "tsv")
 

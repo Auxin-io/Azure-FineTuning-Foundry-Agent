@@ -31,10 +31,10 @@ inputs:
   model_name: Qwen/Qwen2.5-3B-Instruct
   train_data:
     type: uri_file
-    path: azureml:docintel-finance-train:3
+    path: azureml:docintel-finance-train@latest
   validation_data:
     type: uri_file
-    path: azureml:docintel-finance-validation:3
+    path: azureml:docintel-finance-validation@latest
   # Closed-book recall needs many passes - 3 epochs teaches format, 15 teaches facts.
   epochs: 15
   max_seq_length: 256

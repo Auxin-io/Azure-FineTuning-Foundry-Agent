@@ -3,6 +3,5 @@
 $schema: https://azuremlschemas.azureedge.net/latest/data.schema.json
 type: uri_file
 name: docintel-finance-train
-version: 3
 description: finance closed-book training rows, built by the ingestion repo
 path: azureml://datastores/ingest_curated/paths/datasets/closed_book_finance/train.jsonl

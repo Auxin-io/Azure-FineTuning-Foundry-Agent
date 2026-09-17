@@ -4,5 +4,5 @@ $schema: https://azuremlschemas.azureedge.net/latest/azureBlob.schema.json
 name: ingest_curated
 type: azure_blob
 description: curated container of the document-ingestion storage account
-account_name: docintelingestchlo62
+account_name: SET_WITH_--set   # az ml datastore create ... --set account_name=<ingest-storage>
 container_name: curated

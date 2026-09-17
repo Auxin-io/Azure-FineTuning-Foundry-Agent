@@ -14,6 +14,16 @@ User -> M365 Copilot -> Bot Service -> Foundry agent (gpt-4.1-mini) -> OpenAPI t
 
 Training data comes from the
 [ingestion repo](https://github.com/Auxin-io/AWS-Document-Ingestion-Textract).
+Sequence diagrams of every call are in [docs/azure-integration.md](docs/azure-integration.md).
+
+This is the first of three ways the project gives a model knowledge. The
+other two repos reuse the infrastructure and Foundry project created here:
+
+| Dataset | Method | Where the knowledge lives | Repo |
+|---|---|---|---|
+| Finance | fine-tune Qwen2.5-3B (QLoRA) | adapter weights | this repo |
+| Employee | new model trained from scratch | the model's weights | Azure-Employee-Pretraining |
+| HR | RAG | an index, read at inference | Azure-HR-RAG |
 
 ---
 
@@ -29,16 +39,20 @@ Training data comes from the
 ```bash
 az login
 az extension add -n ml
-az ml compute list-usage -l eastus -o table        # Standard NCASv3_T4 Family must be >= 4
-# if 0: portal -> Quotas -> Machine Learning -> eastus -> Standard NCASv3_T4 Family -> request 12
 ```
+
+Portal → **Quotas → Machine Learning → your region → Standard NCASv3_T4
+Family**: if the limit is 0, request 12 before continuing (approved within
+the hour in our case). The CLI check needs a workspace, so it comes after
+Step 1.
 
 On Windows, run the commands from Git Bash and prefix any command that takes
 an ARM resource ID with `MSYS_NO_PATHCONV=1`. Set `PYTHONIOENCODING=utf-8`
 before the Python scripts.
 
-Replace `<workspace>`, `<ai-services-account>` and `<sub>` below with the
-values from `terraform output`.
+Every `<placeholder>` below is a value printed by `terraform output` after
+Step 1 (`<workspace>`, `<ai-services-account>`, `<acr>`, `<sub>`) or by the
+ingestion repo's `terraform output` (`<ingest-storage>`).
 
 ---
 
@@ -60,8 +74,8 @@ Creates, in resource group `docintel-ml-rg`:
 | Storage account, Key Vault, App Insights, Log Analytics | workspace dependencies |
 | Container Registry `docintelacr<sfx>` | environment images are built here |
 | Compute cluster `gpu-t4` — `Standard_NC4as_T4_v3`, min 0 / max 1 | training; scales to zero |
-| AI Services account + `gpt-4.1-mini` deployment | the agent's conversation model |
-| Role assignments | you: Blob Data Contributor, Key Vault Admin, OpenAI User, AI Developer |
+| AI Services account + `gpt-4.1-mini` deployment | the agent's conversation model; project management enabled so it can host the Foundry project |
+| Role assignments | you: Blob Data Contributor, Key Vault Admin, Cognitive Services OpenAI User, Foundry User |
 
 Attach the registry to the workspace (done outside Terraform so the workspace
 is never replaced):
@@ -72,6 +86,12 @@ MSYS_NO_PATHCONV=1 az ml workspace update -n <workspace> -g docintel-ml-rg \
   --update-dependent-resources
 ```
 
+Confirm the GPU quota the workspace sees:
+
+```bash
+az ml compute list-usage -g docintel-ml-rg -w <workspace> -l eastus -o table   # Standard NCASv3_T4 Family >= 4
+```
+
 Nothing here bills by the hour while idle. The clusters scale to zero; only a
 deployed endpoint (Step 4) runs continuously.
 
@@ -79,9 +99,9 @@ deployed endpoint (Step 4) runs continuously.
 
 ## Step 2 — data
 
-The ingestion repo writes the finance closed-book JSONL into its Blob
-container (`build_closed_book.py --dataset finance --upload`, run by its
-`run_all.sh`):
+**Run the ingestion repo first** (`run_all.sh`, or at least
+`build_closed_book.py --dataset finance --upload`). It writes the finance
+closed-book JSONL into its Blob container:
 
 ```
 https://<ingest-storage>.blob.core.windows.net/curated/datasets/closed_book_finance/{train,validation,test}.jsonl
@@ -103,11 +123,14 @@ Register the container as a credential-less datastore and the two files as
 data assets on it — nothing is copied:
 
 ```bash
-cd data            # datastore.yml names the account + container; train.yml / validation.yml point into it
-az ml datastore create -f datastore.yml  -g docintel-ml-rg -w <workspace>
+cd data
+az ml datastore create -f datastore.yml  -g docintel-ml-rg -w <workspace> --set account_name=<ingest-storage>
 az ml data create      -f train.yml      -g docintel-ml-rg -w <workspace>
 az ml data create      -f validation.yml -g docintel-ml-rg -w <workspace>
 ```
+
+`job.yml` refers to the assets as `@latest`, so re-registering after a data
+change needs no edit.
 
 That registers `docintel-finance-train` (615 rows) and
 `docintel-finance-validation` (61 rows). Each row:
@@ -202,34 +225,29 @@ az ml online-endpoint delete -n docintel-qwen -g docintel-ml-rg -w <workspace> -
 
 ## Step 5 — the Foundry agent
 
-The agent lives in a **native Foundry project** on the AI Services account
-(the kind the portal calls "New Foundry"). Create it with two REST calls:
+The agent lives in a **Foundry project** on the AI Services account (the
+kind the portal calls "New Foundry"). Terraform cannot create it yet; one
+REST call does:
 
 ```bash
 AIS=/subscriptions/<sub>/resourceGroups/docintel-ml-rg/providers/Microsoft.CognitiveServices/accounts/<ai-services-account>
-
-az rest --method patch --url "https://management.azure.com$AIS?api-version=2025-04-01-preview" \
-  --body '{"properties":{"allowProjectManagement":true}}'
 
 az rest --method put --url "https://management.azure.com$AIS/projects/docintel-finance?api-version=2025-04-01-preview" \
   --body '{"location":"eastus","identity":{"type":"SystemAssigned"},"properties":{}}'
 ```
 
-Grant the roles. The project identity calls the endpoint; you call the agents
-data plane (Owner does not cover it):
+The project's identity is what calls the endpoint, so let it score:
 
 ```bash
 PROJECT_ID=$(az rest --method get --url "https://management.azure.com$AIS/projects/docintel-finance?api-version=2025-04-01-preview" --query identity.principalId -o tsv)
 EP=$(az ml online-endpoint show -n docintel-qwen -g docintel-ml-rg -w <workspace> --query id -o tsv)
-ME=$(az ad signed-in-user show --query id -o tsv)
-
 MSYS_NO_PATHCONV=1 az role assignment create --assignee-object-id $PROJECT_ID --assignee-principal-type ServicePrincipal \
   --role "AzureML Data Scientist" --scope $EP
-MSYS_NO_PATHCONV=1 az role assignment create --assignee-object-id $ME --assignee-principal-type User \
-  --role "Foundry User" --scope $AIS
 ```
 
-Wait 5–10 minutes for the roles to propagate, then create and test the agent:
+(Your own Foundry data-plane role came from Terraform.) Wait 5–10 minutes for
+the role to propagate, then create and test the agent — the script finds the
+workspace and AI Services account in the resource group by itself:
 
 ```bash
 python -m venv .venv-agents
@@ -279,7 +297,7 @@ Give that identity the same two roles:
 
 ```bash
 AGENT_SP=$(az ad sp list --display-name "<ai-services-account>-docintel-finance-docintel-finance-agent-AgentIdentity" --query "[0].id" -o tsv)
-MSYS_NO_PATHCONV=1 az role assignment create --assignee-object-id $AGENT_SP --assignee-principal-type ServicePrincipal --role "Foundry User"            --scope $AIS
+MSYS_NO_PATHCONV=1 az role assignment create --assignee-object-id $AGENT_SP --assignee-principal-type ServicePrincipal --role 53ca6127-db72-4b80-b1b0-d745d6d5456d --scope $AIS   # Azure AI User / Foundry User
 MSYS_NO_PATHCONV=1 az role assignment create --assignee-object-id $AGENT_SP --assignee-principal-type ServicePrincipal --role "AzureML Data Scientist" --scope $EP
 ```
 
@@ -295,6 +313,23 @@ the agent script, the playground and Copilot:
 
 | Ask | Expect |
 |---|---|
+| How much do we owe Xenon Energy? | INV-35089, $47,186.04 |
+| When is the Meridian Foods invoice due? | INV-15002, 2026-06-12 |
+| What is the Northwind Labs invoice total? | INV-13943, $99,472.14 |
+| What is the Zephyr Networks purchase order number? | PO-8383 |
+| When is the Lakeshore Cabling order required by? | PO-4158, 2026-03-28 |
+| Give me the Vantage Aerospace invoice as JSON. | INV-21787, subtotal $30,986.45, tax $1,549.32, total $32,535.77 |
+| What is the Cedar Systems invoice total? | not in the documents (refusal) |
+| What is the capital of France? | answered by gpt-4.1-mini, no tool call |
+
+The ten documents: invoices from Yarrow Agriculture, Meridian Foods,
+Northwind Labs, Xenon Energy, Vantage Aerospace; purchase orders to Ironwood
+Supply, Zephyr Networks, Halcyon Print, Nordic Optics, Lakeshore Cabling.
+Use the exact vendor names — a near-miss such as "Halcyon Labs" is a
+wrong-premise question and the model may answer it with another document's
+numbers rather than refuse.
+
+---|---|
 | How much do we owe Xenon Energy? | INV-35089, $47,186.04 |
 | When is the Meridian Foods invoice due? | INV-15002, 2026-06-12 |
 | What is the Yarrow Agriculture purchase order number? | the PO number |

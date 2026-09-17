@@ -157,6 +157,9 @@ resource "azurerm_cognitive_account" "ai" {
   sku_name              = "S0"
   custom_subdomain_name = "${var.name_prefix}-ais-${local.sfx}"
 
+  # lets the account host native Foundry projects (README Step 5)
+  project_management_enabled = true
+
   identity {
     type = "SystemAssigned"
   }
@@ -179,33 +182,8 @@ resource "azurerm_cognitive_deployment" "agent_model" {
   }
 }
 
-# --------------------------------------------------------------- Foundry ---
-resource "azurerm_ai_foundry" "hub" {
-  name                = "${var.name_prefix}-hub-${local.sfx}"
-  location            = azurerm_resource_group.this.location
-  resource_group_name = azurerm_resource_group.this.name
-  storage_account_id  = azurerm_storage_account.ml.id
-  key_vault_id        = azurerm_key_vault.ml.id
-
-  identity {
-    type = "SystemAssigned"
-  }
-  tags = var.tags
-}
-
-resource "azurerm_ai_foundry_project" "this" {
-  name               = "${var.name_prefix}-agent"
-  location           = azurerm_ai_foundry.hub.location
-  ai_services_hub_id = azurerm_ai_foundry.hub.id
-
-  identity {
-    type = "SystemAssigned"
-  }
-  tags = var.tags
-}
-
 # ------------------------------------------------------------- data roles ---
-# (The workspace and hub identities get storage access from Azure ML itself.)
+# (The workspace identity gets storage access from Azure ML itself.)
 resource "azurerm_role_assignment" "me_blob" {
   scope                = azurerm_storage_account.ml.id
   role_definition_name = "Storage Blob Data Contributor"
@@ -224,16 +202,12 @@ resource "azurerm_role_assignment" "me_openai" {
   principal_id         = data.azurerm_client_config.current.object_id
 }
 
-resource "azurerm_role_assignment" "me_ai_developer" {
-  scope                = azurerm_ai_foundry_project.this.id
-  role_definition_name = "Azure AI Developer"
-  principal_id         = data.azurerm_client_config.current.object_id
-}
-
-
-
-resource "azurerm_role_assignment" "project_openai" {
-  scope                = azurerm_cognitive_account.ai.id
-  role_definition_name = "Cognitive Services OpenAI User"
-  principal_id         = azurerm_ai_foundry_project.this.identity[0].principal_id
+# Foundry data plane: create and run agents in projects on the AI Services
+# account. Owner does not include this - it is a data action. Referenced by
+# id because the display name differs between tenants ("Azure AI User" /
+# "Foundry User").
+resource "azurerm_role_assignment" "me_foundry_user" {
+  scope              = azurerm_cognitive_account.ai.id
+  role_definition_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/53ca6127-db72-4b80-b1b0-d745d6d5456d"
+  principal_id       = data.azurerm_client_config.current.object_id
 }

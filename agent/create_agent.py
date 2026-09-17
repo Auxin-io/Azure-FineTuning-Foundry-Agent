@@ -27,8 +27,7 @@ from azure.ai.agents.models import (OpenApiManagedAuthDetails, OpenApiManagedSec
 from azure.identity import AzureCliCredential
 
 HERE = Path(__file__).resolve().parent
-PROJECT_ENDPOINT = "https://docintel-ais-dggcb4.services.ai.azure.com/api/projects/docintel-finance"
-RG, WORKSPACE, ENDPOINT = "docintel-ml-rg", "docintel-mlw-dggcb4", "docintel-qwen"
+RG, ENDPOINT, PROJECT = "docintel-ml-rg", "docintel-qwen", "docintel-finance"
 AGENT_NAME, MODEL = "docintel-finance-agent", "gpt-4.1-mini"
 
 INSTRUCTIONS = """You are a finance assistant for the company's ten finance documents.
@@ -46,9 +45,20 @@ def az(*args: str) -> str:
     return subprocess.check_output([AZ, *args], text=True).strip()
 
 
+def workspace() -> str:
+    return az("ml", "workspace", "list", "-g", RG, "--query", "[0].name", "-o", "tsv")
+
+
+def project_endpoint() -> str:
+    """The native Foundry project on the resource group's AI Services account."""
+    account = az("cognitiveservices", "account", "list", "-g", RG,
+                 "--query", "[?kind=='AIServices'].name | [0]", "-o", "tsv")
+    return f"https://{account}.services.ai.azure.com/api/projects/{PROJECT}"
+
+
 def load_spec() -> dict:
     spec = yaml.safe_load((HERE / "finance-qwen.openapi.yaml").read_text(encoding="utf-8"))
-    uri = az("ml", "online-endpoint", "show", "-n", ENDPOINT, "-g", RG, "-w", WORKSPACE,
+    uri = az("ml", "online-endpoint", "show", "-n", ENDPOINT, "-g", RG, "-w", workspace(),
              "--query", "scoring_uri", "-o", "tsv")
     spec["servers"] = [{"url": uri.rsplit("/score", 1)[0]}]
     return spec
@@ -59,7 +69,7 @@ def main() -> None:
     ap.add_argument("--ask", action="append")
     args = ap.parse_args()
 
-    client = AgentsClient(endpoint=PROJECT_ENDPOINT, credential=AzureCliCredential())
+    client = AgentsClient(endpoint=project_endpoint(), credential=AzureCliCredential())
 
     tool = OpenApiTool(
         name="finance_qwen",

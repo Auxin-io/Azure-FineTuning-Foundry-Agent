@@ -18,16 +18,21 @@ output "ai_services_endpoint" {
   value = azurerm_cognitive_account.ai.endpoint
 }
 
+output "ai_services_account" {
+  value = azurerm_cognitive_account.ai.name
+}
+
+output "container_registry" {
+  value = azurerm_container_registry.ml.name
+}
+
+output "foundry_project_endpoint" {
+  description = "native Foundry project created in README Step 5"
+  value       = "https://${azurerm_cognitive_account.ai.custom_subdomain_name}.services.ai.azure.com/api/projects/${var.name_prefix}-finance"
+}
+
 output "agent_model_deployment" {
   value = azurerm_cognitive_deployment.agent_model.name
-}
-
-output "foundry_project" {
-  value = azurerm_ai_foundry_project.this.name
-}
-
-output "foundry_hub" {
-  value = azurerm_ai_foundry.hub.name
 }
 
 output "subscription_id" {
