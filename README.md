@@ -311,6 +311,20 @@ agents*; click **Save as new agent** to migrate it to the versioned agent
 API (the tool and its auth carry over). Open it → **Playground** → the model
 shows `gpt-4.1-mini` → ask a finance question.
 
+**After migrating.** "Save as new agent" copies the agent into the versioned
+agent API; from then on the copy is independent of the classic one the script
+created. The portal also adds a `web_search` tool to the copy, which can let
+gpt-4.1-mini answer from the web instead of the model - remove it in the
+portal or run the script below, which also does that. Whenever you change
+`INSTRUCTIONS` in `agent/create_agent.py`, push them to the migrated copy with:
+
+```bash
+MSYS_NO_PATHCONV=1 PYTHONIOENCODING=utf-8 .venv-agents/Scripts/python agent/publish_version.py
+```
+
+It publishes a new version (`docintel-finance-agent:2`, `:3`, ...) with the same model and
+tools; the playground and Copilot pick up the latest version automatically.
+
 ---
 
 ## Step 6 — publish to Microsoft 365 Copilot
@@ -403,6 +417,7 @@ serving/
   environment.yml, prompt_format.py, test_endpoint.py
 agent/
   create_agent.py               creates and tests the agent (Step 5)
+  publish_version.py            pushes new INSTRUCTIONS to the migrated (versioned) agent
   finance-qwen.openapi.yaml     the tool definition; servers[] is filled in at run time
   requirements.txt
 copilot/
