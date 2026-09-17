@@ -27,6 +27,32 @@ other two repos reuse the infrastructure and Foundry project created here:
 
 ---
 
+## Azure services used
+
+| Service | What it does in this project |
+|---|---|
+| **Blob Storage** (ingestion account) | holds the PDFs, the OCR output and the closed-book JSONL the training job reads; shared keys disabled, identity access only |
+| **Document Intelligence** (`prebuilt-read`) | OCR of the generated PDFs in the ingestion repo |
+| **Azure Machine Learning workspace** | data assets, the training job, the model registry and the managed online endpoint |
+| **AML compute cluster `gpu-t4`** (`Standard_NC4as_T4_v3`) | runs the QLoRA job; scales to zero between runs |
+| **AML datastore `ingest_curated`** | credential-less link from the workspace to the ingestion Blob container |
+| **AML model registry** | versions the LoRA adapter (`docintel-qwen-adapter`) |
+| **AML managed online endpoint** (`docintel-qwen`, T4) | serves Qwen2.5-3B + adapter behind `score.py`; AAD token auth, no keys |
+| **Container Registry** | builds and stores the training and serving environment images |
+| **Storage account** (workspace) | job code snapshots, outputs and logs |
+| **Key Vault** | workspace secrets store (nothing custom is put in it) |
+| **Application Insights + Log Analytics** | endpoint and job telemetry |
+| **AI Services account** | hosts the `gpt-4.1-mini` deployment and the Foundry project |
+| **Azure OpenAI deployment `gpt-4.1-mini`** | the agent's reasoning model: decides when to call the tool and relays the answer |
+| **Foundry project `docintel-finance`** | where the agent, its threads and its tool live; has a managed identity |
+| **Foundry agent + OpenAPI tool** | `docintel-finance-agent` calls the endpoint as `answerFinanceQuestion` |
+| **Managed identity + Entra ID RBAC** | the project identity scores the endpoint (AzureML Data Scientist); you get Foundry User to run agents |
+| **Azure Bot Service** (created by Publish) | bridges the agent to Microsoft 365 Copilot / Teams |
+| **Hugging Face Hub** (external) | source of the base model weights, downloaded at container start |
+| **Terraform** (`azurerm`) | creates everything above except the Foundry project and the bot |
+
+---
+
 ## Prerequisites
 
 - Azure CLI 2.89+ with the ML extension; Terraform >= 1.9; Python 3.11+
