@@ -28,63 +28,8 @@ other two repos reuse the infrastructure and Foundry project created here:
 ---
 
 ## Workflow diagram
-
-Source of truth: [Lucid page](https://lucid.app/lucidchart/ea992a4c-6424-4793-a94e-5d7fd2ea7384/edit?page=OYTuToSd1D.8) (same diagram, editable). The Mermaid copy below renders on GitHub.
-
-```mermaid
-flowchart LR
-    subgraph Ingest["Azure RG: docintel-ingest-rg"]
-        PDF["Generated PDFs<br/>10 finance docs"]
-        BLOB["Blob Storage<br/>raw / curated"]
-        DI["Document Intelligence<br/>prebuilt-read"]
-        JSONL["Closed-book JSONL<br/>train / validation / test"]
-        PDF --> BLOB --> DI --> JSONL
-    end
-
-    HF["Hugging Face<br/>Qwen2.5-3B-Instruct"]
-
-    subgraph Azure["Azure RG: docintel-ml-rg"]
-        subgraph AML["Azure Machine Learning workspace"]
-            ASSET["Data assets<br/>docintel-finance-train / validation"]
-            JOB["Command job<br/>training/job.yml"]
-            COMPUTE["gpu-t4<br/>Standard_NC4as_T4_v3"]
-            TRAIN["QLoRA training<br/>training/train.py"]
-            REG["Model registry<br/>docintel-qwen-adapter"]
-            DEPLOY["blue deployment<br/>serving/score.py<br/>Qwen2.5-3B + adapter"]
-            ENDPOINT["Managed online endpoint<br/>AAD token auth"]
-        end
-        SA["Storage account"]
-        KV["Key Vault"]
-        ACR["Container Registry"]
-        AI["Application Insights"]
-        LA["Log Analytics"]
-
-        subgraph AIS["AI Services account: docintel-ais-dggcb4"]
-            GPT["gpt-4.1-mini deployment"]
-            subgraph PROJECT["Foundry project: docintel-finance"]
-                AGENT["docintel-finance-agent"]
-                OPENAPI["OpenAPI tool<br/>answerFinanceQuestion"]
-                ID["Project managed identity"]
-            end
-        end
-    end
-
-    USER["Finance user"] --> COPILOT["Microsoft 365<br/>Copilot / Teams"] --> BOT["Azure Bot Service<br/>docintel-finance-agent44599"] --> AGENT
-
-    JSONL --> ASSET --> JOB --> COMPUTE --> TRAIN --> REG --> DEPLOY --> ENDPOINT
-    HF --> DEPLOY
-    AML -.-> SA
-    AML -.-> KV
-    AML -.-> ACR
-    AML -.-> AI
-    AI -.-> LA
-
-    AGENT --> OPENAPI
-    AGENT --> GPT
-    OPENAPI -->|"POST /score"| ENDPOINT
-    ENDPOINT -->|"answer + variant + latency"| OPENAPI
-    ID -. "AAD token<br/>AzureML Data Scientist" .-> ENDPOINT
-```
+The diagram below shows the workflow of the project.
+<img width="3452" height="1593" alt="AI Project#1 - Doc Intel AWS v2 - Fine-Tune-Flow" src="https://github.com/user-attachments/assets/f719add2-bedb-42c9-be02-a4940ba7bf68" />
 
 Left to right: the ingestion resource group turns generated PDFs into the closed-book
 JSONL; Azure ML registers it as data assets, runs the QLoRA job on the T4 cluster, registers
