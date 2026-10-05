@@ -164,9 +164,9 @@ deployed endpoint (Step 4) runs continuously.
 
 ## Step 2 — data
 
-**Run the ingestion repo first** (`run_all.sh`, or at least
-`build_closed_book.py --dataset finance --upload`). It writes the finance
-closed-book JSONL into its Blob container:
+**Prerequisite, not a step to repeat.** If you have already run the ingestion
+repo (`bash run_all.sh`), this is done - ingestion runs once and feeds all
+three tracks. Its finance closed-book JSONL is already in Blob at:
 
 ```
 https://<ingest-storage>.blob.core.windows.net/curated/datasets/closed_book_finance/{train,validation,test}.jsonl
@@ -185,8 +185,9 @@ az ml data create -f validation.yml -g <ml-rg> -w <workspace>
 `job.yml` refers to the assets as `@latest`, so re-registering after a data
 change needs no edit.
 
-That registers `<project>-train` (615 rows) and
-`<project>-validation` (61 rows). Each row:
+That registers `docintel-finance-train` (615 rows) and
+`docintel-finance-validation` (61 rows) - the names are set in the two yml
+files, so they do not follow `name_prefix`. Each row:
 
 ```json
 {"task": "recall", "instruction": "What is the Zephyr Networks invoice total?",
