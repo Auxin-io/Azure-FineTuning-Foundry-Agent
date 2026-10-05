@@ -38,10 +38,11 @@ The diagram below shows the workflow of the project.
 <img width="3452" height="1593" alt="AI Project#1 - Doc Intel AWS v2 - Fine-Tune-Flow" src="https://github.com/user-attachments/assets/f719add2-bedb-42c9-be02-a4940ba7bf68" />
 
 Left to right: the ingestion resource group turns generated PDFs into the closed-book
-JSONL; Azure ML registers it as data assets, runs the QLoRA job on the T4 cluster, registers
-the adapter and serves base model + adapter behind a token-protected endpoint; the Foundry
-agent calls that endpoint through its OpenAPI tool using the project's managed identity, and
-Microsoft 365 Copilot reaches the agent through the Bot Service created by *Publish*.
+JSONL **(already done for the data ingestion)**; Azure ML registers it as data assets,
+runs the QLoRA job on the T4 cluster, registers the adapter and serves base model +
+adapter behind a token-protected endpoint; the Foundry agent calls that endpoint through
+its OpenAPI tool using the project's managed identity, and Microsoft 365 Copilot reaches
+the agent through the Bot Service created by *Publish*.
 Every box maps to a step below: Step 2 (data assets), Step 3 (job, compute, registry),
 Step 4 (deployment, endpoint), Step 5 (agent, tool, identity), Step 6 (Copilot).
 
