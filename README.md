@@ -62,8 +62,8 @@ Step 4 (deployment, endpoint), Step 5 (agent, tool, identity), Step 6 (Copilot).
 | **Application Insights + Log Analytics** | endpoint and job telemetry |
 | **AI Services account** | hosts the `gpt-4.1-mini` deployment and the Foundry project |
 | **Azure OpenAI deployment `gpt-4.1-mini`** | the agent's reasoning model: decides when to call the tool and relays the answer |
-| **Foundry project `docintel-finance`** | where the agent, its threads and its tool live; has a managed identity |
-| **Foundry agent + OpenAPI tool** | `docintel-finance-agent` calls the endpoint as `answerFinanceQuestion` |
+| **Foundry project `<project>`** | where the agent, its threads and its tool live; has a managed identity |
+| **Foundry agent + OpenAPI tool** | `finance-agent` calls the endpoint as `answerFinanceQuestion` |
 | **Managed identity + Entra ID RBAC** | the project identity scores the endpoint (AzureML Data Scientist); you get Foundry User to run agents |
 | **Azure Bot Service** (created by Publish) | bridges the agent to Microsoft 365 Copilot / Teams |
 | **Hugging Face Hub** (external) | source of the base model weights, downloaded at container start |
@@ -110,34 +110,54 @@ terraform apply ml.tfplan
 terraform output
 ```
 
-Creates, in resource group `docintel-ml-rg`:
+`terraform.tfvars` needs three values - the last two are the only thing this
+repo takes from another repository:
+
+```hcl
+name_prefix                 = "yourprefix"
+ingest_storage_account_name = "<ingestion repo's terraform output storage_account>"
+ingest_resource_group_name  = "<ingestion repo's terraform output resource_group>"
+```
+
+Creates, in resource group `<prefix>-finetune-rg`:
 
 | Resource | Purpose |
 |---|---|
-| Azure ML workspace `docintel-mlw-<sfx>` | training jobs, model registry, endpoints |
+| Azure ML workspace | training jobs, model registry, endpoints |
 | Storage account, Key Vault, App Insights, Log Analytics | workspace dependencies |
-| Container Registry `docintelacr<sfx>` | environment images are built here |
-| Compute cluster `gpu-t4` — `Standard_NC4as_T4_v3`, min 0 / max 1 | training; scales to zero |
-| AI Services account + `gpt-4.1-mini` deployment | the agent's conversation model; project management enabled so it can host the Foundry project |
-| Role assignments | you: Blob Data Contributor, Key Vault Admin, Cognitive Services OpenAI User, Foundry User |
+| Container Registry | environment images are built here |
+| GPU cluster (`Standard_NC4as_T4_v3`) + CPU cluster, both min 0 / max 1 | training; scale to zero |
+| AI Services account + `gpt-4.1-mini` deployment | the agent's conversation model; project management enabled so it can host the project |
+| **Foundry project** | where the agent lives - previously a manual `az rest` call |
+| **Credential-less datastore `ingest_curated`** | the workspace reads the ingestion container as itself, no keys |
+| Role assignments | you: Blob Data Contributor, Key Vault Admin, OpenAI User, Foundry User. Workspace + clusters: Blob Data Reader on the ingestion account. Project: a least-privilege scorer role |
 
-Attach the registry to the workspace (done outside Terraform so the workspace
-is never replaced):
+This stack is **self-contained**. It does not need any other track deployed,
+and no other track needs it.
+
+Attach the registry to the workspace. This is the one step Terraform cannot
+do: setting `container_registry_id` forces the workspace to be *replaced* on
+every later apply, destroying compute and jobs with it.
 
 ```bash
-MSYS_NO_PATHCONV=1 az ml workspace update -n <workspace> -g docintel-ml-rg \
-  --container-registry "/subscriptions/<sub>/resourceGroups/docintel-ml-rg/providers/Microsoft.ContainerRegistry/registries/<acr>" \
-  --update-dependent-resources
+MSYS_NO_PATHCONV=1 az ml workspace update -n <workspace> -g <ml-rg> --container-registry "/subscriptions/<sub>/resourceGroups/<ml-rg>/providers/Microsoft.ContainerRegistry/registries/<acr>" --update-dependent-resources
 ```
 
 Confirm the GPU quota the workspace sees:
 
 ```bash
-az ml compute list-usage -g docintel-ml-rg -w <workspace> -l eastus -o table   # Standard NCASv3_T4 Family >= 4
+az ml compute list-usage -g <ml-rg> -w <workspace> -l <region> -o table   # Standard NCASv3_T4 Family >= 4
+```
+
+Then load the resource names the scripts need - none of them hardcode a name:
+
+```bash
+eval "$(terraform -chdir=terraform output -raw agent_env)"
 ```
 
 Nothing here bills by the hour while idle. The clusters scale to zero; only a
 deployed endpoint (Step 4) runs continuously.
+
 
 ---
 
@@ -151,33 +171,21 @@ closed-book JSONL into its Blob container:
 https://<ingest-storage>.blob.core.windows.net/curated/datasets/closed_book_finance/{train,validation,test}.jsonl
 ```
 
-Give the training cluster and the workspace read access to that account
-(shared keys are disabled there; access is by identity only):
-
-```bash
-STG=$(az storage account show -n <ingest-storage> -g docintel-ingest-rg --query id -o tsv)
-for ID in $(az ml compute show   -n gpu-t4      -g docintel-ml-rg -w <workspace> --query identity.principal_id -o tsv) \
-          $(az ml workspace show -n <workspace> -g docintel-ml-rg                --query identity.principal_id -o tsv); do
-  MSYS_NO_PATHCONV=1 az role assignment create --assignee-object-id $ID --assignee-principal-type ServicePrincipal \
-    --role "Storage Blob Data Reader" --scope $STG
-done
-```
-
-Register the container as a credential-less datastore and the two files as
-data assets on it — nothing is copied:
+The Blob read grants and the `ingest_curated` datastore are created by Step 1
+now, so all that is left is registering the two files as data assets on that
+datastore - nothing is copied:
 
 ```bash
 cd data
-az ml datastore create -f datastore.yml  -g docintel-ml-rg -w <workspace> --set account_name=<ingest-storage>
-az ml data create      -f train.yml      -g docintel-ml-rg -w <workspace>
-az ml data create      -f validation.yml -g docintel-ml-rg -w <workspace>
+az ml data create -f train.yml      -g <ml-rg> -w <workspace>
+az ml data create -f validation.yml -g <ml-rg> -w <workspace>
 ```
 
 `job.yml` refers to the assets as `@latest`, so re-registering after a data
 change needs no edit.
 
-That registers `docintel-finance-train` (615 rows) and
-`docintel-finance-validation` (61 rows). Each row:
+That registers `<project>-train` (615 rows) and
+`<project>-validation` (61 rows). Each row:
 
 ```json
 {"task": "recall", "instruction": "What is the Zephyr Networks invoice total?",
@@ -192,7 +200,7 @@ That registers `docintel-finance-train` (615 rows) and
 
 ```bash
 cd training
-az ml job create -f job.yml -g docintel-ml-rg -w <workspace> --query name -o tsv
+az ml job create -f job.yml -g <ml-rg> -w <workspace> --query name -o tsv
 ```
 
 `job.yml` runs `train.py` on `gpu-t4` with the
@@ -211,7 +219,7 @@ the conda environment in `environment.yml`:
 Watch it:
 
 ```bash
-az ml job show -n <job> -g docintel-ml-rg -w <workspace> --query status -o tsv
+az ml job show -n <job> -g <ml-rg> -w <workspace> --query status -o tsv
 ```
 
 Phases: `Preparing` (image build, ~15 min first time) → `Queued` (~3 min) →
@@ -228,13 +236,13 @@ automatically. Expect ~8 hours and ~USD 19.
 ## Step 4 — register and serve
 
 ```bash
-az ml model create -g docintel-ml-rg -w <workspace> \
+az ml model create -g <ml-rg> -w <workspace> \
   --name docintel-qwen-adapter --type custom_model \
   --path azureml://jobs/<job>/outputs/model
 
 cd serving
-az ml online-endpoint create   -f endpoint.yml   -g docintel-ml-rg -w <workspace>
-az ml online-deployment create -f deployment.yml -g docintel-ml-rg -w <workspace> --all-traffic
+az ml online-endpoint create   -f endpoint.yml   -g <ml-rg> -w <workspace>
+az ml online-deployment create -f deployment.yml -g <ml-rg> -w <workspace> --all-traffic
 ```
 
 `endpoint.yml` sets `auth_mode: aad_token` — the endpoint has no keys.
@@ -262,45 +270,36 @@ container — the difference is what fine-tuning wrote into the weights.
 demos:
 
 ```bash
-az ml online-endpoint delete -n docintel-qwen -g docintel-ml-rg -w <workspace> -y
+az ml online-endpoint delete -n docintel-qwen -g <ml-rg> -w <workspace> -y
 ```
 
 ---
 
 ## Step 5 — the Foundry agent
 
-The agent lives in a **Foundry project** on the AI Services account (the
-kind the portal calls "New Foundry"). Terraform cannot create it yet; one
-REST call does:
+The agent lives in a **Foundry project** on the AI Services account (the kind
+the portal calls "New Foundry"). Step 1 already created it, gave it a
+system-assigned identity, and granted that identity a least-privilege role on
+the workspace so it can score your endpoint.
+
+That role is deliberately *not* `AzureML Data Scientist`, which would also
+grant `workspaces/*/write` and `/delete` - enough for the agent's identity to
+delete the endpoint it calls. The custom role Terraform creates holds exactly
+two permissions: read an online endpoint, and score it.
+
+So there is nothing to set up here. Load the names and run the script:
+
 
 ```bash
-AIS=/subscriptions/<sub>/resourceGroups/docintel-ml-rg/providers/Microsoft.CognitiveServices/accounts/<ai-services-account>
+eval "$(terraform -chdir=terraform output -raw agent_env)"
 
-az rest --method put --url "https://management.azure.com$AIS/projects/docintel-finance?api-version=2025-04-01-preview" \
-  --body '{"location":"eastus","identity":{"type":"SystemAssigned"},"properties":{}}'
-```
-
-The project's identity is what calls the endpoint, so let it score:
-
-```bash
-PROJECT_ID=$(az rest --method get --url "https://management.azure.com$AIS/projects/docintel-finance?api-version=2025-04-01-preview" --query identity.principalId -o tsv)
-EP=$(az ml online-endpoint show -n docintel-qwen -g docintel-ml-rg -w <workspace> --query id -o tsv)
-MSYS_NO_PATHCONV=1 az role assignment create --assignee-object-id $PROJECT_ID --assignee-principal-type ServicePrincipal \
-  --role "AzureML Data Scientist" --scope $EP
-```
-
-(Your own Foundry data-plane role came from Terraform.) Wait 5–10 minutes for
-the role to propagate, then create and test the agent — the script finds the
-workspace and AI Services account in the resource group by itself:
-
-```bash
 python -m venv .venv-agents
 .venv-agents/Scripts/pip install -r agent/requirements.txt
 PYTHONIOENCODING=utf-8 .venv-agents/Scripts/python agent/create_agent.py
 ```
 
 The script puts the live `scoring_uri` into the OpenAPI spec, creates
-`docintel-finance-agent` on `gpt-4.1-mini` with the endpoint as an OpenAPI
+`finance-agent` on `gpt-4.1-mini` with the endpoint as an OpenAPI
 tool authenticated by the project's managed identity (audience
 `https://ml.azure.com`), then asks three questions and reports whether the
 tool was called:
@@ -324,7 +323,7 @@ Re-running the script updates the agent in place. To ask your own question:
 ```
 
 **Portal.** Open https://ai.azure.com, switch **New Foundry** on, choose
-project `docintel-finance` → Agents. The agent is listed under *Classic
+project `<project>` → Agents. The agent is listed under *Classic
 agents*; click **Save as new agent** to migrate it to the versioned agent
 API (the tool and its auth carry over). Open it → **Playground** → the model
 shows `gpt-4.1-mini` → ask a finance question.
@@ -340,7 +339,7 @@ portal or run the script below, which also does that. Whenever you change
 MSYS_NO_PATHCONV=1 PYTHONIOENCODING=utf-8 .venv-agents/Scripts/python agent/publish_version.py
 ```
 
-It publishes a new version (`docintel-finance-agent:2`, `:3`, ...) with the same model and
+It publishes a new version (`finance-agent:2`, `:3`, ...) with the same model and
 tools; the playground and Copilot pick up the latest version automatically.
 
 ---
@@ -349,18 +348,18 @@ tools; the playground and Copilot pick up the latest version automatically.
 
 In the migrated agent click **Publish → Teams and Microsoft 365**, fill in the
 descriptions, keep the generated bot name, and finish. This creates an Azure
-Bot Service (`docintel-finance-agent<nnnnn>`, free F0 tier) in the resource
+Bot Service (`finance-agent<nnnnn>`, free F0 tier) in the resource
 group and a service principal named `…-AgentIdentity` that the bot runs as.
 Give that identity the same two roles:
 
 ```bash
-AGENT_SP=$(az ad sp list --display-name "<ai-services-account>-docintel-finance-docintel-finance-agent-AgentIdentity" --query "[0].id" -o tsv)
+AGENT_SP=$(az ad sp list --display-name "<ai-services-account>-<project>-finance-agent-AgentIdentity" --query "[0].id" -o tsv)
 MSYS_NO_PATHCONV=1 az role assignment create --assignee-object-id $AGENT_SP --assignee-principal-type ServicePrincipal --role 53ca6127-db72-4b80-b1b0-d745d6d5456d --scope $AIS   # Azure AI User / Foundry User
 MSYS_NO_PATHCONV=1 az role assignment create --assignee-object-id $AGENT_SP --assignee-principal-type ServicePrincipal --role "AzureML Data Scientist" --scope $EP
 ```
 
 After a few minutes: https://copilot.microsoft.com → **Agents** →
-`docintel-finance-agent` → new chat → *"How much do we owe Xenon Energy?"*
+`finance-agent` → new chat → *"How much do we owe Xenon Energy?"*
 
 ---
 
@@ -409,8 +408,8 @@ numbers rather than refuse.
 | Bot Service F0 | free |
 
 ```bash
-az ml online-endpoint delete -n docintel-qwen -g docintel-ml-rg -w <workspace> -y   # stop the meter
-az bot delete -n <bot> -g docintel-ml-rg                                            # created by Publish, not Terraform
+az ml online-endpoint delete -n docintel-qwen -g <ml-rg> -w <workspace> -y   # stop the meter
+az bot delete -n <bot> -g <ml-rg>                                            # created by Publish, not Terraform
 cd terraform && terraform destroy                                                   # everything else
 ```
 

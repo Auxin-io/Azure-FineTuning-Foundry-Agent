@@ -10,6 +10,12 @@
 
 data "azurerm_client_config" "current" {}
 
+# The one thing this stack needs from another repository.
+data "azurerm_storage_account" "ingest" {
+  name                = var.ingest_storage_account_name
+  resource_group_name = var.ingest_resource_group_name
+}
+
 resource "random_string" "suffix" {
   length  = 6
   upper   = false
@@ -21,7 +27,7 @@ locals {
 }
 
 resource "azurerm_resource_group" "this" {
-  name     = "${var.name_prefix}-ml-rg"
+  name     = "${var.name_prefix}-finetune-rg"
   location = var.location
   tags     = var.tags
 }
@@ -210,4 +216,86 @@ resource "azurerm_role_assignment" "me_foundry_user" {
   scope              = azurerm_cognitive_account.ai.id
   role_definition_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/53ca6127-db72-4b80-b1b0-d745d6d5456d"
   principal_id       = data.azurerm_client_config.current.object_id
+}
+
+# ------------------------------------------------------- Foundry project ---
+# Was a manual `az rest --method put` step. The project's system-assigned
+# identity is what calls the scoring endpoint, so it has to exist in state
+# for the role assignment below to reference it.
+resource "azapi_resource" "project" {
+  type      = "Microsoft.CognitiveServices/accounts/projects@2025-04-01-preview"
+  name      = var.project_name
+  parent_id = azurerm_cognitive_account.ai.id
+  location  = azurerm_resource_group.this.location
+  tags      = var.tags
+
+  identity {
+    type = "SystemAssigned"
+  }
+
+  body = {
+    properties = {}
+  }
+}
+
+# ------------------------------------------- ingestion data, no keys ------
+# Credential-less: no account_key and no SAS, so the workspace reads the
+# container as itself. The role assignments below are what make it work.
+resource "azurerm_machine_learning_datastore_blobstorage" "ingest_curated" {
+  name                 = "ingest_curated"
+  workspace_id         = azurerm_machine_learning_workspace.this.id
+  storage_container_id = "${data.azurerm_storage_account.ingest.id}/blobServices/default/containers/${var.ingest_container}"
+  description          = "curated container of the document-ingestion storage account"
+}
+
+# Shared keys are disabled on the ingestion account, so identity is the only
+# way in. The workspace reads data assets; the cluster reads them at job time.
+resource "azurerm_role_assignment" "ws_reads_ingest" {
+  scope                = data.azurerm_storage_account.ingest.id
+  role_definition_name = "Storage Blob Data Reader"
+  principal_id         = azurerm_machine_learning_workspace.this.identity[0].principal_id
+}
+
+resource "azurerm_role_assignment" "gpu_reads_ingest" {
+  count                = var.enable_gpu_cluster ? 1 : 0
+  scope                = data.azurerm_storage_account.ingest.id
+  role_definition_name = "Storage Blob Data Reader"
+  principal_id         = azurerm_machine_learning_compute_cluster.gpu[0].identity[0].principal_id
+}
+
+resource "azurerm_role_assignment" "cpu_reads_ingest" {
+  scope                = data.azurerm_storage_account.ingest.id
+  role_definition_name = "Storage Blob Data Reader"
+  principal_id         = azurerm_machine_learning_compute_cluster.cpu.identity[0].principal_id
+}
+
+# You need this to run fetch/upload steps and read the datasets yourself.
+resource "azurerm_role_assignment" "me_reads_ingest" {
+  scope                = data.azurerm_storage_account.ingest.id
+  role_definition_name = "Storage Blob Data Reader"
+  principal_id         = data.azurerm_client_config.current.object_id
+}
+
+# ------------------------------------- project -> endpoint, least privilege ---
+# The agent's tool call is the project identity scoring the online endpoint.
+# "AzureML Data Scientist" would do it but also grants workspaces/*/write and
+# /delete - enough to delete the endpoint. Score + read is all that is needed.
+resource "azurerm_role_definition" "endpoint_scorer" {
+  name        = "${var.name_prefix}-endpoint-scorer-${local.sfx}"
+  scope       = azurerm_machine_learning_workspace.this.id
+  description = "Read and score online endpoints in this workspace. Nothing else."
+
+  permissions {
+    actions      = ["Microsoft.MachineLearningServices/workspaces/onlineEndpoints/read"]
+    data_actions = ["Microsoft.MachineLearningServices/workspaces/onlineEndpoints/score/action"]
+    not_actions  = []
+  }
+
+  assignable_scopes = [azurerm_machine_learning_workspace.this.id]
+}
+
+resource "azurerm_role_assignment" "project_scores_endpoints" {
+  scope              = azurerm_machine_learning_workspace.this.id
+  role_definition_id = azurerm_role_definition.endpoint_scorer.role_definition_resource_id
+  principal_id       = azapi_resource.project.identity[0].principal_id
 }

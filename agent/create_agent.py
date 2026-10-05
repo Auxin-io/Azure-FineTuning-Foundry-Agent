@@ -16,6 +16,7 @@ AzureML Data Scientist role on the endpoint - see README Step 5.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -27,8 +28,14 @@ from azure.ai.agents.models import (OpenApiManagedAuthDetails, OpenApiManagedSec
 from azure.identity import AzureCliCredential
 
 HERE = Path(__file__).resolve().parent
-RG, ENDPOINT, PROJECT = "docintel-ml-rg", "docintel-qwen", "docintel-finance"
-AGENT_NAME, MODEL = "docintel-finance-agent", "gpt-4.1-mini"
+# Resource names come from the environment so this script works against any
+# deployment of this repo's terraform/ stack. Load them with:
+#   eval "$(terraform -chdir=terraform output -raw agent_env)"
+RG         = os.environ.get("AZURE_RESOURCE_GROUP", "docintel-finetune-rg")
+ENDPOINT   = os.environ.get("ML_ENDPOINT_NAME",     "docintel-qwen")
+PROJECT    = os.environ.get("FOUNDRY_PROJECT",      "finance")
+AGENT_NAME = os.environ.get("AGENT_NAME",           "finance-agent")
+MODEL      = os.environ.get("AGENT_MODEL",          "gpt-4.1-mini")
 
 INSTRUCTIONS = """You are a finance assistant for the company's ten finance documents.
 For any question about an invoice, a purchase order, a vendor, a supplier, an amount,

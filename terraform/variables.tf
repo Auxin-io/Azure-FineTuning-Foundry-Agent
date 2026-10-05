@@ -48,3 +48,30 @@ variable "enable_gpu_cluster" {
   type        = bool
   default     = true
 }
+
+# ------------------------------------------------------------------- inputs
+# The ONLY dependency this stack has on another repository: the storage
+# account that Azure-Document-Ingestion created. Read it from that repo's
+#   terraform output storage_account
+#   terraform output resource_group
+variable "ingest_storage_account_name" {
+  description = "Storage account created by Azure-Document-Ingestion, holding the curated container."
+  type        = string
+}
+
+variable "ingest_resource_group_name" {
+  description = "Resource group of that storage account."
+  type        = string
+}
+
+variable "ingest_container" {
+  description = "Container with the OCR output and the closed-book datasets."
+  type        = string
+  default     = "curated"
+}
+
+variable "project_name" {
+  description = "Foundry project that holds the finance agent. Created by this stack."
+  type        = string
+  default     = "finance"
+}
