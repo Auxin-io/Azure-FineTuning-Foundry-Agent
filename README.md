@@ -1,6 +1,6 @@
 # Fine-tune Qwen on Azure ML and serve it behind a Foundry agent
 
-> **New here?** Read **[START-HERE.md](https://github.com/Auxin-io/Azure-Document-Ingestion/blob/main/START-HERE.md)** first. It covers prerequisites, which repo to
+> **New here?** Read **[the Azure-Document-Ingestion README](https://github.com/Auxin-io/Azure-Document-Ingestion#readme)** first. It covers prerequisites, which repo to
 > run in what order, and the shared Azure foundation this repo assumes already exists.
 >
 > This repo is **Track A - fine-tune** of three ways to give a model knowledge (knowledge in adapter weights). It cannot run until
