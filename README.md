@@ -1,5 +1,11 @@
 # Fine-tune Qwen on Azure ML and serve it behind a Foundry agent
 
+> **New here?** Read **[START-HERE.md](https://github.com/Auxin-io/Azure-Document-Ingestion/blob/main/START-HERE.md)** first. It covers prerequisites, which repo to
+> run in what order, and the shared Azure foundation this repo assumes already exists.
+>
+> This repo is **Track A - fine-tune** of three ways to give a model knowledge (knowledge in adapter weights). It cannot run until
+> [Azure-Document-Ingestion](https://github.com/Auxin-io/Azure-Document-Ingestion) has produced the data, and the shared foundation exists.
+
 Trains a LoRA adapter for `Qwen/Qwen2.5-3B-Instruct` on the **finance
 closed-book** data (615 question → answer rows, no document text), serves it
 from an Azure ML managed online endpoint, and puts a Foundry agent in front of
