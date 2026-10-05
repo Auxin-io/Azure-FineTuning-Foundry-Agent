@@ -178,7 +178,7 @@ resource "azurerm_cognitive_deployment" "agent_model" {
 
   sku {
     name     = "GlobalStandard"
-    capacity = 10
+    capacity = 150
   }
 }
 
