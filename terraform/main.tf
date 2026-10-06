@@ -296,12 +296,17 @@ resource "azurerm_role_assignment" "cpu_reads_ingest" {
   principal_id         = azurerm_machine_learning_compute_cluster.cpu.identity[0].principal_id
 }
 
-# You need this to run fetch/upload steps and read the datasets yourself.
-resource "azurerm_role_assignment" "me_reads_ingest" {
-  scope                = data.azurerm_storage_account.ingest.id
-  role_definition_name = "Storage Blob Data Reader"
-  principal_id         = data.azurerm_client_config.current.object_id
-}
+# Note: there is deliberately no "me_reads_ingest" assignment here.
+# The ingestion repo already grants whoever ran it Storage Blob Data
+# Contributor on that account, which covers read. Granting it again from a
+# track stack fails with 409 RoleAssignmentExists as soon as a second track is
+# deployed, because Azure keys an assignment on (principal, role, scope) and
+# the person is the same in all of them.
+#
+# Deploying a track as a DIFFERENT identity than the one that ran ingestion?
+# Grant yourself read once, by hand:
+#   az role assignment create --assignee <you> --role "Storage Blob Data Reader" \
+#     --scope $(az storage account show -n <ingest-storage> -g <ingest-rg> --query id -o tsv)
 
 # ------------------------------------- project -> endpoint, least privilege ---
 # The agent's tool call is the project identity scoring the online endpoint.
