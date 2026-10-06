@@ -331,3 +331,29 @@ resource "azurerm_role_assignment" "project_scores_endpoints" {
   role_definition_id = azurerm_role_definition.endpoint_scorer.role_definition_resource_id
   principal_id       = azapi_resource.project.identity[0].principal_id
 }
+
+# ------------------------------------------------- pull the training image ---
+# admin_enabled is false on the registry, so there is no admin password to fall
+# back on - the only way in is a role assignment. The node pulls as the COMPUTE
+# cluster's own identity, not as the workspace, so the cluster needs this even
+# though `az ml workspace update --container-registry` already ran. Without it
+# the image builds and pushes, then the node fails with
+# AggregatedUnauthorizedAccessError and the container never starts.
+resource "azurerm_role_assignment" "gpu_pulls_image" {
+  count                = var.enable_gpu_cluster ? 1 : 0
+  scope                = azurerm_container_registry.ml.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_machine_learning_compute_cluster.gpu[0].identity[0].principal_id
+}
+
+resource "azurerm_role_assignment" "cpu_pulls_image" {
+  scope                = azurerm_container_registry.ml.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_machine_learning_compute_cluster.cpu.identity[0].principal_id
+}
+
+resource "azurerm_role_assignment" "ws_pulls_image" {
+  scope                = azurerm_container_registry.ml.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_machine_learning_workspace.this.identity[0].principal_id
+}

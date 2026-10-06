@@ -131,7 +131,7 @@ Creates, in resource group `<prefix>-finetune-rg`:
 | AI Services account + `gpt-4.1-mini` deployment | the agent's conversation model; project management enabled so it can host the project |
 | **Foundry project** | where the agent lives - previously a manual `az rest` call |
 | **Credential-less datastore `ingest_curated`** | the workspace reads the ingestion container as itself, no keys |
-| Role assignments | you: Blob Data Contributor, Key Vault Admin, OpenAI User, Foundry User. Workspace + clusters: Blob Data Reader on the ingestion account. Project: a least-privilege scorer role |
+| Role assignments | you: Blob Data Contributor, Key Vault Admin, OpenAI User, Foundry User. Workspace + clusters: Blob Data Reader on the ingestion account, **and AcrPull on the registry so the node can pull the training image**. Project: a least-privilege scorer role |
 
 This stack is **self-contained**. It does not need any other track deployed,
 and no other track needs it.
