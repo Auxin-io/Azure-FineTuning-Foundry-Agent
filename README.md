@@ -1,16 +1,12 @@
 # Fine-tune Qwen on Azure ML and serve it behind a Foundry agent
 
-> **New here?** Read **[the Azure-Document-Ingestion README](https://github.com/Auxin-io/Azure-Document-Ingestion#readme)** first. It covers prerequisites, which repo to
-> run in what order, and the shared Azure foundation this repo assumes already exists.
->
-> This repo is **Track A - fine-tune** of three ways to give a model knowledge (knowledge in adapter weights). It cannot run until
-> [Azure-Document-Ingestion](https://github.com/Auxin-io/Azure-Document-Ingestion) has produced the data, and the shared foundation exists.
+> Read **[Azure-Document-Ingestion](https://github.com/Auxin-io/Azure-Document-Ingestion#readme)** first. It covers prerequisites. It has produced the data, and the shared foundation exists.
 
-Trains a LoRA adapter for `Qwen/Qwen2.5-3B-Instruct` on the **finance
-closed-book** data (615 question → answer rows, no document text), serves it
+In this project we trains a LoRA adapter for `Qwen/Qwen2.5-3B-Instruct` on the **finance
+closed-book** data, serves it
 from an Azure ML managed online endpoint, and puts a Foundry agent in front of
 it so a user in Microsoft 365 Copilot can ask a finance question and get the
-answer from the fine-tuned weights — no document attached, no retrieval.
+answer from the fine-tuned weights.
 
 ```
 Blob (finance JSONL)  ->  Azure ML training job (T4, QLoRA)  ->  Model registry  ->  Managed online endpoint
@@ -19,17 +15,7 @@ User -> M365 Copilot -> Bot Service -> Foundry agent (gpt-4.1-mini) -> OpenAPI t
 ```
 
 Training data comes from the
-[ingestion repo](https://github.com/Auxin-io/AWS-Document-Ingestion-Textract).
-Sequence diagrams of every call are in [docs/azure-integration.md](docs/azure-integration.md).
-
-This is the first of three ways the project gives a model knowledge. The
-other two repos reuse the infrastructure and Foundry project created here:
-
-| Dataset | Method | Where the knowledge lives | Repo |
-|---|---|---|---|
-| Finance | fine-tune Qwen2.5-3B (QLoRA) | adapter weights | this repo |
-| Employee | new model trained from scratch | the model's weights | Azure-Employee-Pretraining |
-| HR | RAG | an index, read at inference | Azure-HR-RAG |
+[Azure-Document-Ingestion](https://github.com/Auxin-io/Azure-Document-Ingestion).
 
 ---
 
@@ -88,16 +74,7 @@ az extension add -n ml
 
 Portal → **Quotas → Machine Learning → your region → Standard NCASv3_T4
 Family**: if the limit is 0, request 12 before continuing (approved within
-the hour in our case). The CLI check needs a workspace, so it comes after
-Step 1.
-
-On Windows, run the commands from Git Bash and prefix any command that takes
-an ARM resource ID with `MSYS_NO_PATHCONV=1`. Set `PYTHONIOENCODING=utf-8`
-before the Python scripts.
-
-Every `<placeholder>` below is a value printed by `terraform output` after
-Step 1 (`<workspace>`, `<ai-services-account>`, `<acr>`, `<sub>`) or by the
-ingestion repo's `terraform output` (`<ingest-storage>`).
+the hour in our case).
 
 ---
 
@@ -108,16 +85,8 @@ cd terraform
 terraform init
 terraform plan -out=ml.tfplan
 terraform apply ml.tfplan
-terraform output
-```
-
-`terraform.tfvars` needs three values - the last two are the only thing this
-repo takes from another repository:
-
-```hcl
-name_prefix                 = "yourprefix"
-ingest_storage_account_name = "<ingestion repo's terraform output storage_account>"
-ingest_resource_group_name  = "<ingestion repo's terraform output resource_group>"
+terraform output # Note Down all these keys and values
+cd ..
 ```
 
 Creates, in resource group `<prefix>-finetune-rg`:
@@ -129,25 +98,16 @@ Creates, in resource group `<prefix>-finetune-rg`:
 | Container Registry | environment images are built here |
 | GPU cluster (`Standard_NC4as_T4_v3`) + CPU cluster, both min 0 / max 1 | training; scale to zero |
 | AI Services account + `gpt-4.1-mini` deployment | the agent's conversation model; project management enabled so it can host the project |
-| **Foundry project** | where the agent lives - previously a manual `az rest` call |
+| **Foundry project** | where the agent lives |
 | **Credential-less datastore `ingest_curated`** | the workspace reads the ingestion container as itself, no keys |
-| Role assignments | you: Blob Data Contributor, Key Vault Admin, OpenAI User, Foundry User. Workspace + clusters: Blob Data Reader on the ingestion account, **and AcrPull on the registry so the node can pull the training image**. Project: a least-privilege scorer role |
-
-This stack is **self-contained**. It does not need any other track deployed,
-and no other track needs it.
+| Role assignments | you: Blob Data Contributor, Key Vault Admin, OpenAI User, Foundry User. Workspace + clusters: Blob Data Reader on the ingestion account. Project: a least-privilege scorer role |
 
 Attach the registry to the workspace. This is the one step Terraform cannot
 do: setting `container_registry_id` forces the workspace to be *replaced* on
 every later apply, destroying compute and jobs with it.
 
 ```bash
-MSYS_NO_PATHCONV=1 az ml workspace update -n <workspace> -g <ml-rg> --container-registry "/subscriptions/<sub>/resourceGroups/<ml-rg>/providers/Microsoft.ContainerRegistry/registries/<acr>" --update-dependent-resources
-```
-
-Confirm the GPU quota the workspace sees:
-
-```bash
-az ml compute list-usage -g <ml-rg> -w <workspace> -l <region> -o table   # Standard NCASv3_T4 Family >= 4
+az ml workspace update -n <workspace> -g <ml-rg> --container-registry "/subscriptions/<sub>/resourceGroups/<ml-rg>/providers/Microsoft.ContainerRegistry/registries/<acr>" --update-dependent-resources
 ```
 
 Then load the resource names the scripts need - none of them hardcode a name:
@@ -156,45 +116,18 @@ Then load the resource names the scripts need - none of them hardcode a name:
 eval "$(terraform -chdir=terraform output -raw agent_env)"
 ```
 
-Nothing here bills by the hour while idle. The clusters scale to zero; only a
-deployed endpoint (Step 4) runs continuously.
-
-
 ---
 
 ## Step 2 — data
 
-**Prerequisite, not a step to repeat.** If you have already run the ingestion
-repo (`bash run_all.sh`), this is done - ingestion runs once and feeds all
-three tracks. Its finance closed-book JSONL is already in Blob at:
-
-```
-https://<ingest-storage>.blob.core.windows.net/curated/datasets/closed_book_finance/{train,validation,test}.jsonl
-```
-
-The Blob read grants and the `ingest_curated` datastore are created by Step 1
-now, so all that is left is registering the two files as data assets on that
-datastore - nothing is copied:
+Run the following commands to add the data configuration in ML.
 
 ```bash
 cd data
 az ml data create -f train.yml      -g <ml-rg> -w <workspace>
 az ml data create -f validation.yml -g <ml-rg> -w <workspace>
+cd ..
 ```
-
-`job.yml` refers to the assets as `@latest`, so re-registering after a data
-change needs no edit.
-
-That registers `docintel-finance-train` (615 rows) and
-`docintel-finance-validation` (61 rows) - the names are set in the two yml
-files, so they do not follow `name_prefix`. Each row:
-
-```json
-{"task": "recall", "instruction": "What is the Zephyr Networks invoice total?",
- "input": "", "output": "The Zephyr Networks invoice INV-32811 totals $48,362.08."}
-```
-
-`input` is empty on purpose — closed book. The model learns the answers.
 
 ---
 
@@ -203,32 +136,8 @@ files, so they do not follow `name_prefix`. Each row:
 ```bash
 cd training
 JOB=$(az ml job create -f job.yml -g <ml-rg> -w <workspace> --query name -o tsv | tr -d '\r')
-echo "$JOB"      # e.g. calm_ghost_pp48ktjbr6
+echo "$JOB"
 ```
-
-**That printed name is the job id**, and Steps 3 and 4 both need it. It is a
-random `adjective_noun_id` string that Azure assigns - not the display name
-`docintel-finance-closed-book`. Keeping it in `$JOB` means you never have to
-retype it.
-
-If you lose it (new terminal, closed session), get it back:
-
-```bash
-# the most recent training job, whatever its state
-az ml job list -g <ml-rg> -w <workspace> --max-results 10 \
-  --query "[].{name:name, status:status, display:display_name}" -o table
-
-# or straight into the variable, the latest one that finished
-JOB=$(az ml job list -g <ml-rg> -w <workspace> \
-  --query "[?status=='Completed'] | [0].name" -o tsv | tr -d '\r')
-```
-
-Ignore any entry named `imgbldrun_*` - that is the image build, not your
-training run.
-
-`job.yml` runs `train.py` on `gpu-t4` with the
-`mcr.microsoft.com/azureml/openmpi5.0-cuda12.4-ubuntu22.04` base image and
-the conda environment in `environment.yml`:
 
 | Setting | Value | Why |
 |---|---|---|
@@ -242,35 +151,21 @@ the conda environment in `environment.yml`:
 Watch it:
 
 ```bash
-az ml job stream -n "$JOB" -g <ml-rg> -w <workspace>
+az ml job show -n $JOB -g <ml-rg> -w <workspace> --query status -o tsv
 ```
-
-`stream` follows the run live and prints the real error if it fails. Prefer it
-over polling `az ml job show --query status`, which only ever tells you
-`Failed` and nothing about why. (`watch az ml job show ...` does not work here
-at all.)
-
-Phases: `Preparing` (image build, ~15 min first time) → `Queued` (~3 min) →
-`Running` (model download ~5 min, then training). On the T4 the run takes
-about **3 h 15 min** and costs about **USD 1.75**. The step counter is in
+The step counter is in
 Studio → job → *Outputs + logs → user_logs/std_log.txt*.
-
-To train without a GPU, point `job.yml` at `compute: azureml:cpu-e32` and the
-image `openmpi4.1.0-ubuntu22.04`; `train.py` switches to plain LoRA on fp32
-automatically. Expect ~8 hours and ~USD 19.
 
 ---
 
 ## Step 4 — register and serve
 
 ```bash
-# $JOB is the job id from Step 3. The job must say Completed first -
-# outputs/model does not exist until training finishes.
 az ml model create -g <ml-rg> -w <workspace> \
   --name docintel-qwen-adapter --type custom_model \
   --path "azureml://jobs/$JOB/outputs/model"
 
-cd serving
+cd ../serving
 az ml online-endpoint create   -f endpoint.yml   -g <ml-rg> -w <workspace>
 az ml online-deployment create -f deployment.yml -g <ml-rg> -w <workspace> --all-traffic
 ```
@@ -283,56 +178,30 @@ answers with greedy decoding in about a second. Deployment takes ~20 minutes.
 Test — base vs tuned side by side, with your `az login` token:
 
 ```bash
-PYTHONIOENCODING=utf-8 python serving/test_endpoint.py
 python serving/test_endpoint.py --ask "How much do we owe Xenon Energy?"
 ```
 
 ```
 Q  How much do we owe Xenon Energy?
    BASE   I don't have access to specific invoices ...
-   TUNED  The Xenon Energy invoice INV-35089 totals $47,186.04.   [980 ms]
-```
-
-`use_adapter: false` in a request serves the untuned base from the same
-container — the difference is what fine-tuning wrote into the weights.
-
-**The endpoint bills ~USD 0.53/hour while it exists.** Delete it between
-demos:
-
-```bash
-az ml online-endpoint delete -n docintel-qwen -g <ml-rg> -w <workspace> -y
+   TUNED  The Xenon Energy invoice INV-35089 totals $47,186.04.
 ```
 
 ---
 
 ## Step 5 — the Foundry agent
 
-The agent lives in a **Foundry project** on the AI Services account (the kind
-the portal calls "New Foundry"). Step 1 already created it, gave it a
-system-assigned identity, and granted that identity a least-privilege role on
-the workspace so it can score your endpoint.
-
-That role is deliberately *not* `AzureML Data Scientist`, which would also
-grant `workspaces/*/write` and `/delete` - enough for the agent's identity to
-delete the endpoint it calls. The custom role Terraform creates holds exactly
-two permissions: read an online endpoint, and score it.
-
-So there is nothing to set up here. Load the names and run the script:
-
-
 ```bash
-eval "$(terraform -chdir=terraform output -raw agent_env)"
-
-python -m venv .venv-agents
-.venv-agents/Scripts/pip install -r agent/requirements.txt
-PYTHONIOENCODING=utf-8 .venv-agents/Scripts/python agent/create_agent.py
+cd ../foundry
+python3 -m venv .venv-agents
+source .venv-agents/bin/activate
+pip install -r requirements.txt
+.venv-agents/bin/python create_agent.py
 ```
 
-The script puts the live `scoring_uri` into the OpenAPI spec, creates
-`finance-agent` on `gpt-4.1-mini` with the endpoint as an OpenAPI
-tool authenticated by the project's managed identity (audience
-`https://ml.azure.com`), then asks three questions and reports whether the
-tool was called:
+The script creates (or updates)
+`employee-agent` on `gpt-4.1-mini` with the endpoint as an OpenAPI
+tool authenticated by managed identity, then asks three questions:
 
 ```
 Q  How much do we owe Xenon Energy?
@@ -346,57 +215,22 @@ A  The capital of France is Paris.
    tool called: NO
 ```
 
-Re-running the script updates the agent in place. To ask your own question:
-
-```bash
-.venv-agents/Scripts/python agent/create_agent.py --ask "What is the Yarrow Agriculture purchase order number?"
-```
-
-**Portal.** Open https://ai.azure.com, switch **New Foundry** on, choose
-project `<project>` → Agents. The agent is listed under *Classic
-agents*; click **Save as new agent** to migrate it to the versioned agent
-API (the tool and its auth carry over). Open it → **Playground** → the model
-shows `gpt-4.1-mini` → ask a finance question.
-
-**After migrating.** "Save as new agent" copies the agent into the versioned
-agent API; from then on the copy is independent of the classic one the script
-created. The portal also adds a `web_search` tool to the copy, which can let
-gpt-4.1-mini answer from the web instead of the model - remove it in the
-portal or run the script below, which also does that. Whenever you change
-`INSTRUCTIONS` in `agent/create_agent.py`, push them to the migrated copy with:
-
-```bash
-MSYS_NO_PATHCONV=1 PYTHONIOENCODING=utf-8 .venv-agents/Scripts/python agent/publish_version.py
-```
-
-It publishes a new version (`finance-agent:2`, `:3`, ...) with the same model and
-tools; the playground and Copilot pick up the latest version automatically.
+**Portal:** https://ai.azure.com → New Foundry → project `<project>` →
+Agents → `employee-agent` → Save as new agent → Playground.
 
 ---
 
 ## Step 6 — publish to Microsoft 365 Copilot
 
-In the migrated agent click **Publish → Teams and Microsoft 365**, fill in the
+In the agent click **Publish → Teams and Microsoft 365**, fill in the
 descriptions, keep the generated bot name, and finish. This creates an Azure
-Bot Service (`finance-agent<nnnnn>`, free F0 tier) in the resource
-group and a service principal named `…-AgentIdentity` that the bot runs as.
-Give that identity the same two roles:
-
-```bash
-AGENT_SP=$(az ad sp list --display-name "<ai-services-account>-<project>-finance-agent-AgentIdentity" --query "[0].id" -o tsv)
-MSYS_NO_PATHCONV=1 az role assignment create --assignee-object-id $AGENT_SP --assignee-principal-type ServicePrincipal --role 53ca6127-db72-4b80-b1b0-d745d6d5456d --scope $AIS   # Azure AI User / Foundry User
-MSYS_NO_PATHCONV=1 az role assignment create --assignee-object-id $AGENT_SP --assignee-principal-type ServicePrincipal --role "AzureML Data Scientist" --scope $EP
-```
-
-After a few minutes: https://copilot.microsoft.com → **Agents** →
-`finance-agent` → new chat → *"How much do we owe Xenon Energy?"*
+Bot Service (free F0) and a service principal.
 
 ---
 
 ## Test questions
 
-All ten vendors are in the weights. Any of these work in the endpoint test,
-the agent script, the playground and Copilot:
+All ten vendors are in the weights.
 
 | Ask | Expect |
 |---|---|
@@ -406,22 +240,6 @@ the agent script, the playground and Copilot:
 | What is the Zephyr Networks purchase order number? | PO-8383 |
 | When is the Lakeshore Cabling order required by? | PO-4158, 2026-03-28 |
 | Give me the Vantage Aerospace invoice as JSON. | INV-21787, subtotal $30,986.45, tax $1,549.32, total $32,535.77 |
-| What is the Cedar Systems invoice total? | not in the documents (refusal) |
-| What is the capital of France? | answered by gpt-4.1-mini, no tool call |
-
-The ten documents: invoices from Yarrow Agriculture, Meridian Foods,
-Northwind Labs, Xenon Energy, Vantage Aerospace; purchase orders to Ironwood
-Supply, Zephyr Networks, Halcyon Print, Nordic Optics, Lakeshore Cabling.
-Use the exact vendor names — a near-miss such as "Halcyon Labs" is a
-wrong-premise question and the model may answer it with another document's
-numbers rather than refuse.
-
----|---|
-| How much do we owe Xenon Energy? | INV-35089, $47,186.04 |
-| When is the Meridian Foods invoice due? | INV-15002, 2026-06-12 |
-| What is the Yarrow Agriculture purchase order number? | the PO number |
-| What is the Vantage Aerospace invoice total? | the total |
-| Give me the Nordic Timber invoice as JSON. | the whole record |
 | What is the Cedar Systems invoice total? | not in the documents (refusal) |
 | What is the capital of France? | answered by gpt-4.1-mini, no tool call |
 
@@ -467,12 +285,4 @@ agent/
   publish_version.py            pushes new INSTRUCTIONS to the migrated (versioned) agent
   finance-qwen.openapi.yaml     the tool definition; servers[] is filled in at run time
   requirements.txt
-copilot/
-  manual M365 declarative-agent package (alternative to Step 6; needs a tenant admin)
-docs/
-  azure-integration.md          architecture, request sequence, identities and roles
 ```
-
-`prompt_format.py` must be identical in `training/` and `serving/` — the
-system prompt the adapter was trained under is the one it must be served
-under.
