@@ -1,4 +1,4 @@
-# Fine-tune Qwen on Azure ML and serve it behind a Foundry agent
+# Fine-tune on Azure ML and serve it behind a Foundry agent
 
 > Read **[Azure-Document-Ingestion](https://github.com/Auxin-io/Azure-Document-Ingestion#readme)** first. It covers prerequisites. It has produced the data, and the shared foundation exists.
 
