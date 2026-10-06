@@ -202,8 +202,29 @@ files, so they do not follow `name_prefix`. Each row:
 
 ```bash
 cd training
-az ml job create -f job.yml -g <ml-rg> -w <workspace> --query name -o tsv
+JOB=$(az ml job create -f job.yml -g <ml-rg> -w <workspace> --query name -o tsv | tr -d '\r')
+echo "$JOB"      # e.g. calm_ghost_pp48ktjbr6
 ```
+
+**That printed name is the job id**, and Steps 3 and 4 both need it. It is a
+random `adjective_noun_id` string that Azure assigns - not the display name
+`docintel-finance-closed-book`. Keeping it in `$JOB` means you never have to
+retype it.
+
+If you lose it (new terminal, closed session), get it back:
+
+```bash
+# the most recent training job, whatever its state
+az ml job list -g <ml-rg> -w <workspace> --max-results 10 \
+  --query "[].{name:name, status:status, display:display_name}" -o table
+
+# or straight into the variable, the latest one that finished
+JOB=$(az ml job list -g <ml-rg> -w <workspace> \
+  --query "[?status=='Completed'] | [0].name" -o tsv | tr -d '\r')
+```
+
+Ignore any entry named `imgbldrun_*` - that is the image build, not your
+training run.
 
 `job.yml` runs `train.py` on `gpu-t4` with the
 `mcr.microsoft.com/azureml/openmpi5.0-cuda12.4-ubuntu22.04` base image and
@@ -221,8 +242,13 @@ the conda environment in `environment.yml`:
 Watch it:
 
 ```bash
-az ml job show -n <job> -g <ml-rg> -w <workspace> --query status -o tsv
+az ml job stream -n "$JOB" -g <ml-rg> -w <workspace>
 ```
+
+`stream` follows the run live and prints the real error if it fails. Prefer it
+over polling `az ml job show --query status`, which only ever tells you
+`Failed` and nothing about why. (`watch az ml job show ...` does not work here
+at all.)
 
 Phases: `Preparing` (image build, ~15 min first time) → `Queued` (~3 min) →
 `Running` (model download ~5 min, then training). On the T4 the run takes
@@ -238,9 +264,11 @@ automatically. Expect ~8 hours and ~USD 19.
 ## Step 4 — register and serve
 
 ```bash
+# $JOB is the job id from Step 3. The job must say Completed first -
+# outputs/model does not exist until training finishes.
 az ml model create -g <ml-rg> -w <workspace> \
   --name docintel-qwen-adapter --type custom_model \
-  --path azureml://jobs/<job>/outputs/model
+  --path "azureml://jobs/$JOB/outputs/model"
 
 cd serving
 az ml online-endpoint create   -f endpoint.yml   -g <ml-rg> -w <workspace>
