@@ -192,7 +192,7 @@ Q  How much do we owe Xenon Energy?
 ## Step 5 — the Foundry agent
 
 ```bash
-cd ../foundry
+cd ../agent
 python3 -m venv .venv-agents
 source .venv-agents/bin/activate
 pip install -r requirements.txt
